@@ -1,0 +1,437 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Lab Session 6: Signal Averaging and Confidence Intervals\n",
+    "## Auditory Computation, Modelling and Devices (E092970A)\n",
+    "### Dept of Information Technology (UGent) and Dept of Electronics and Informatics (VUB)\n",
+    "Sarah Verhulst"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "<font color=blue>Students names and IDs: </font> <Br>\n",
+    "<font color=blue>Academic Year </font>: 2021-2022"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#run this first before you start\n",
+    "import numpy as np\n",
+    "import scipy as sci\n",
+    "import matplotlib.pyplot as plt\n",
+    "import matplotlib.patches as mpatches\n",
+    "from matplotlib import colors as colors\n",
+    "%matplotlib inline\n",
+    "from scipy import stats\n",
+    "import statsmodels.api as sm\n",
+    "import scipy.io\n",
+    "import scipy.signal as sig\n",
+    "import statsmodels"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Part 1: Auditory Brainstem Response (ABR)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Auditory EEG for hearing diagnostics"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Here, we will make use of the event-related potentials (EEG) to a sensory event. We use multiple repetitions to the same event to improve the signal-to-noise ratio of the data. We will use this information to perform bootstrapping-based hypothesis testing. In the first part, you will process your own recorded auditory brainstem responses (ABRs), which were recorded to 3000 repetitions of an acoustic click. The resulting signal has a very typical waveform with distinct peaks which occur within the first 10 ms after the click onset, and which resemble different processing stages along the auditory pathway. The peak at 1-2 ms (wave-I) reflects the ensemble of auditory-nerve fibers available, whereas the peak at 5-7 ms (wave-V) reflects the brainstem processing of sound (inferior colliculus). The ABR is hence some sort of impulse response of the ear, and is often clinically used to detect peripheral brain lesions, or as a screening tool for neonates. The signal also has information about how the ear processes sound (i.e. for research purposes).\n",
+    "\n",
+    "<img src=\"ABRsetup.png\" style=\"height:400px\">\n",
+    "\n",
+    "ABR stimuli were clicks of 80 and 100 dB SPL, which were repeated 3000 times. The clicks were presented in opposite polarity, which means that first a positive click was presented, then a negative one, and so forth. Four files were extracted from each of your recordings and are included in the EEG_data folder, e.g. for an ABR recorded with an 80 dB SPL click:\n",
+    "\n",
+    "1. ABR_80_Cz: recorded signal from the electrode placed on the top of head (i.e. the B16 electrode as you saw in the lab session)  \n",
+    "2. ABR_80_ref1: recorded signal from the left earlobe electrode (i.e. the external electrode that you placed on the left ear)\n",
+    "3. ABR_80_ref2: recorded signal from the right earlobe electrode (i.e. the external electrode that you placed on the right ear)\n",
+    "4. TrigsABR_80: trigger signal which indicates the onset of each epoch by \"1\". Odd epochs correspond to positive polarity stimuli and even epochs to negative polarity.\n",
+    "\n",
+    "The same definition holds for the rest of the recorded conditions (ABR_100, SAM_EFR, david), recorded using the different stimuli. The files containing \"group_stimulus\" in their name correspond to the recordings made with each group's pre-designed stimuli.\n",
+    "\n",
+    "Run the following code to extract your data from the recording."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Load in the data\n",
+    "ABRData80 = scipy.io.loadmat('EEG_data/ABR_80_Cz.mat')\n",
+    "ABR80_ref1 = scipy.io.loadmat('EEG_data/ABR_80_ref1.mat')\n",
+    "ABR80_ref2 = scipy.io.loadmat('EEG_data/ABR_80_ref2.mat')\n",
+    "ABR80_trig = scipy.io.loadmat('EEG_data/TrigsABR_80.mat')\n",
+    "\n",
+    "#here we do all the analysis for the 80dB click stimulus, you should do the same for the 100 dB stimulus as well as\n",
+    "#for the ABR signals that you recorded using your programmed stimuli\n",
+    "\n",
+    "#Sampling frequency\n",
+    "FS = 16384\n",
+    "Sig_80 = ABRData80['Ch'] #has the raw recording trace of EEG data\n",
+    "ref1_80 = ABR80_ref1['Ch']\n",
+    "ref2_80 = ABR80_ref2['Ch']\n",
+    "\n",
+    "\n",
+    "T_80 = ABR80_trig['Trigs'] #is the channel with equal duration of the recording, but which has the trigger events \n",
+    "#(i.e. sample numbers at which a click was presented)\n",
+    "#find all the triggers\n",
+    "indx_80 = np.where(np.diff(T_80)==1)[1]+1 #index has the sample numbers at which an event started\n",
+    "#We will just average both polarities together, but those interested could also repeat the analysis \n",
+    "#for only the positive or negative polarity click stimuli by separating the odd and even epochs (trigger indexes). "
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "- Plot the 10-th to 11-th second (one second duration) of the Sig_80 (i.e. the main signal), reference channels (ref1_80 and ref2_80), average of the ref1_80 and ref2_80, and triggers (T_80) in separate figures using plt.subplot to get a feeling of your data. Make titles for each figure, i.e., 'Recorded signal', 'Reference Signal1', 'Reference Signal2', 'Averaged Reference' and 'Trigger signal'. First, define a time vector with a duration of one second and then plot the above-mentioned signals. Assign proper labels for the x and y axes.\n",
+    "- Re-reference the main signal (Sig_80) to the average of the reference channels (ref1_80 and ref2_80) and plot the re-referenced channel in a separate figure (the same time interval, i.e. the 10-th to 11-th second). To apply the re-referencing, subtract the averaged reference channel from the main signal (Sig_80). "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Apply a 4th order butterworth filter (sig.butter) to your data (re-referenced signal) with cut-off frequencies between 100 and 1500 Hz. Use the sig.filtfilt function to design your filters, apply first the HP filter and then afterwards the LP filter. Then, visualize the signal spectrum as well as the time-domain signal before and after filtering (use np.fft.fft)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Now it is time to epoch your data into the events, here it is important to cut your signal 5ms before the trigger onset (indx events) and analyse up to 20ms after the trigger event. Count the number of events you will have (len(indx)), and then make a matrix which has dimensions (len(indx) x samples), where samples correspond to a time axis which starts 5 ms before the click (event occurs at 0) and runs 20 ms until after the click. Once you made your epochs, make a figure which plots time vs all your epochs at once (you might have to transpose your matrix to plot using the \".T\" function). Afterwards, subtract the mean of each epoch from the same epoch to apply the baseline correction. This visualisation is helpful when determining a threshold above which you will remove \"bad\" or \"noisy\" epochs. Here, you will likely only remove 5 or 10 % of the noisiest epochs (the ones with the largest absolute amplitude). Write a code to automatically remove equal number of epochs of each polarity with amplitudes above a reasonable \"self-determined\" threshold value. Discard the noisy epochs and now compare your epochs before and after noise-rejecting. Did your algorithm work? \n",
+    "\n",
+    "\n",
+    "Once you have rejected the noisy epochs,  concatenate the epochs of each polarity and then average the epochs and have a look at the mean ABR waveform (plotted over time). Do you notice the wave-V peak near 6-7 ms?\n",
+    "Perform the same preprocessing steps for the 100 dB ABR data. Compare the wave-1 and 5 peaks and latencies in two ABR recordings (ABR80 and ABR100) and provide your explanation in this regard at the bottom of your code.\n",
+    "\n",
+    "NOTE: Regarding the ABR peaks latencies, consider an approximate 1.2 ms offset caused by sound delivery system.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here (ABR_100 analysis)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "To perform statistics on the signal peaks of the 80 and 100 dB ABR waveforms, it is necessary to quantify the variability of each of the datapoints in the waveform. You can estimate this variability by using a resampling method which calculates a waveform corresponding to the 5 and 95\\% datapoint on each time sample. In this way, you generate a 5% and 95% Confidence Interval (CI) on the data-points of the mean waveform (i.e. approximately corresponding to the standard error of the mean) which you can use to evaluate the significance of waveform feature differences in the two recordings.\n",
+    "- Use the matrix with epochs (after noise-rejection) to generate a 5th and 95th percentile waveform of the 80 or 100 dB . The specific steps include, (i) calculate and store 1000 resampled mean waveforms from the epoch matrix, by randomly sampling epochs (with replacement) from the matrix before you calculate the mean waveform (use np.random.choice to get the random indices, and pick out the corresponding epochs before you calculate the mean signal for each of the 1000 resampling loops).\n",
+    "- After this procedure, you have 1000 mean waveforms over time stored. You can plot your matrix with 1000 mean ABR waveforms (use yourmatrixname.T in case there is a dimension mismatch with your time vector), to see that most mean ABR waveforms preserve the ABR waveform maximum near 5 ms.  "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Next, you can calculate the CI05 and CI95 waveforms out of the (1000 x time sample) matrix with resampled mean signals. To do this, you need to write a for loop that has an equal length as your time vector (\"for n in range(0,len(time)):\"), and that for each sample, ranks the values from low to high. You can store the indices of ranked values using the \"np.argsort\" function. Once you did this, you have the indices corresponding to ascending order values for each time sample. Take index numbers [49] and [949] out for each time-sample to generate the CI05 and CI95 waveforms respectively. \n",
+    "- For the Ch 80 and 100 dB waveforms, plot the mean waveform (before bootstrapping) along with the CI05 and CI95 waveforms on the same plot (with different colors for the 80 and 100 dB condition). You can also modify the following script to plot the confidence interval as a filled area around the mean waveform (but then it is graphically better to plot the results on two figures instead). \n",
+    "    - plt.show()\n",
+    "    - fig, ax = plt.subplots(1,1,sharex=True)\n",
+    "    - ax.plot(t,xmean,color='k')\n",
+    "    - ax.fill_between(t, CI05[:,0], CI95[:,0],color='C1')\n",
+    "    - plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Part 2: Envelope Following Response (EFR)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The next recording is one from an envelope-following response (EFR). Here the stimulus was a 500-ms long, 70 dB SPL, 4-kHz pure tone which was modulated with a 120 Hz envelope. When the auditory-nerve fibers are intact, the EEG response will follow the stimulus envelope frequency, and hence we need to analyse the strength of the response in the frequency domain. Again, the triggers may be of positive and negative polarity, and you can follow the same steps as of ABR to load in the data and identify the samples at which the onsets occur. Afterwards, plot the Cz channel, reference channels, average of the two reference channels and triggers in different panels of a subplot. Then, similar to ABRs, re-reference the Cz channel recording to the average of the reference channels and plot the result in a separate figure. The labeling of the files is similar to that of the ABRs:\n",
+    "\n",
+    "1. SAM_EFR_Cz: recorded signal from the electrode placed on the top of head (i.e. the B16 electrode)\n",
+    "2. SAM_EFR_ref1: recorded signal from the left earlobe electrode\n",
+    "3. SAM_EFR_ref2: recorded signal from the right earlobe electrode\n",
+    "4. TrigsSAM_EFR: trigger signal which indicates the onset of each epoch by \"1\". Odd epochs were presented with positive polarity and even epochs with negative polarity.\n",
+    "\n",
+    "\n",
+    "Note: \n",
+    "- The sampling frequency (FS) is 16384 Hz.\n",
+    "- The stimulus was repeated 1000 times (500 positive and 500 negative epochs)\n",
+    "- Limit the plots' x-axis to the range of 3 seconds (e.g. 10 to 13 seconds).\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Different than for the ABRs, you should apply a filter with cut-off frequencies between 60 and 1000 Hz, and epoch your recordings between 100 ms and 500 ms after the trigger onset to maintain a steady-state response which is not influenced by the offset. You may have a look at the waveform in earlier starting windows too in case you want to observe the onset response.\n",
+    "\n",
+    "(1) Plot the signal before and after filtering in separate figures with proper titles. You can use plt.subplot. (2) After epoching, subtract the mean of each epoch from the same epoch to apply the baseline correction.\n",
+    "(3) Plot the extracted epochs. To do it, first, define a time vector according to the duration of your epochs, i.e. 400 ms, convert it to miliseconds and then label the x-axis, properly. Title your plot as \"400-ms epochs\".\n",
+    "(4)  Repeat the same procedure as the step (2-3), but with epochs of 500 ms, i.e. define your epochs between 0 to 500 ms after the trigger to see the onset response.\n",
+    "\n",
+    "Note that you may need to transpose your variables (depending on how you have defined them) before plotting."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Have a look at the quality of your epochs, and make a piece of code which removes those epochs which have the 10% highest overall amplitude from both the positive and negative epochs, to make sure you remove an equal number of positive and negative epochs to remove epochs with artifacts. To implement it, use the 400-ms epochs in the previous section and drop the 10% of epochs of each polarity with the highest maximum values.\n",
+    "\n",
+    "- Plot the sorted maximum values of epochs of each polarity in separate figures. \n",
+    "- Then remove the 10% of epochs with the highest amplitudes and plot the remained epochs maximum values on top of the figures of the previous step (Do it for both polarities).\n",
+    "- After removing the artifact-contaminated epochs, plot the artifact-free positive and negative epochs in separate figures with proper titles and x-axis labels. How would you interpret the figures? Do you think removing 10% of the noisy epochs was enough or still your epochs contain artifact-contaminated epochs?"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Next, concatenate the positive and the negative epochs, and average the response across all epochs. This is the EFR time-domain waveform, make a time-axis and plot the result (t=0 should correspond to the trigger time)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Now plot the power spectrum of the EFR (2*abs(fft(X))/length(X)), make a frequency axis and if necessary plot the 20log10 response. After plotting the spectrum, limit your frequency axis to the range of [0-1000] Hz.\n",
+    "\n",
+    "Do you notice a peak at 120 Hz? Are there other spectral peaks observed? The size of the spectral peak can be identified as the EFR strength can be related to the fidelity with which the auditory brainstem can track stimulus envelopes. Ageing listeners and listeners with hearing damage may have weaker responses because of synaptopathy (a reduction in the number of auditory-nerve fibers)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The last recording corresponds to the envelope-following response (EFR) of a word extracted from the Flemish Speech Matrix, to show how EFRs can be extracted for more complex stimuli. The word \"David\" was used and was monotonized so that its fundamental frequency (F0) is constant over time at ~220 Hz. The stimulus was then high-pass filtered with a cutoff frequency of 1650 Hz and calibrated at 70 dB SPL. For the recording, the stimulus was cut to 500 ms and was repeated 1200 times (600 positive and 600 negative epochs). The EEG response to such a stimulus is expected to follow the fundamental frequency of the original speech. \n",
+    "\n",
+    "The same procedure (as for the modulated tone) can be followed to extract the Cz channel, reference channels and trigger signals, and re-reference the Cz channel recording to the average of the reference channels. For your convenience you can plot everything in the same way as before. The same labelling is followed:\n",
+    "\n",
+    "1. david_EFR_Cz: recorded signal from the electrode placed on the top of head\n",
+    "2. david_EFR_ref1: recorded signal from the left earlobe electrode\n",
+    "3. david_EFR_ref2: recorded signal from the right earlobe electrode\n",
+    "4. Trigsdavid_EFR: trigger signal which indicates the onset of each epoch by \"1\". Odd epochs correspond to positive polarity stimuli and even epochs to negative polarity."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The same filtering can be applied as in the previous case (60-1000 Hz). Since the stimulus used is not periodic over time, the whole 500 ms response after the trigger onset needs to be used here. Follow the same procedure to:\n",
+    "\n",
+    "(1) Plot the signal before and after filtering. \n",
+    "(2) Epoch the signal and subtract the mean of each epoch from the same epoch to apply the baseline correction.\n",
+    "(3) Plot the extracted 500-ms epochs. "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "- Based on the triggers, separate the positive and negative polarity epochs and plot the sorted maximum values of epochs of each polarity in separate figures. \n",
+    "- Remove the 10% of epochs with the highest amplitudes and plot the remained epochs maximum values on top of the figures of the previous step (for both polarities).\n",
+    "- After removing the artifact-contaminated epochs, plot the artifact-free positive and negative epochs in separate figures."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Next, concatenate the positive and the negative epochs and average the response across all epochs to get the EFR time-domain waveform."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Now plot the power spectrum of the EFR (2*abs(fft(X))/length(X)) for the averaged signal across all epochs. After plotting the spectrum, limit your frequency axis to the range of [0-1000] Hz.\n",
+    "\n",
+    "Are there any spectral peaks observed that are related to the speech stimulus in your opinion? "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#your code goes here"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.6.10"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
