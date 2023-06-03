@@ -1,0 +1,6 @@
+% run#
+% track1: exppar1 exppar2 exppar3 exppar4;
+       1
+      7.00000000              bb           right      noise_ipsi
+      7.00000000              hp           right      noise_ipsi
+      7.00000000              lp           right      noise_ipsi
